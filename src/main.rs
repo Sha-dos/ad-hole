@@ -48,15 +48,15 @@ fn parse_dns_request(bytes: &[u8]) -> Result<Request> {
     let id = u16::from_be_bytes(bytes[0..2].try_into()?);
 
     let flags = bytes[2];
-    let qr = flags & 1 != 0;
-    let opcode = (flags >> 1) & 0x0F;
-    let aa = (flags >> 4) & 1 != 0;
-    let tc = (flags >> 5) & 1 != 0;
-    let rd = (flags >> 6) & 1 != 0;
-    let ra = (flags >> 7) & 1 != 0;
+    let qr = (flags >> 7) & 1 != 0;
+    let opcode = (flags >> 3) & 0x0F;
+    let aa = (flags >> 2) & 1 != 0;
+    let tc = (flags >> 1) & 1 != 0;
+    let rd = flags & 1 != 0;
+    let ra = (bytes[3] >> 7) & 1 != 0;
 
-    let z = bytes[3] & 0x0F;
-    let rcode = (bytes[3] >> 4) & 0x0F;
+    let z = (bytes[3] >> 4) & 0x07;
+    let rcode = bytes[3] & 0x0F;
 
     let header = Header {
         id,
@@ -68,10 +68,10 @@ fn parse_dns_request(bytes: &[u8]) -> Result<Request> {
         ra,
         z,
         rcode,
-        qdcount: u16::from_le_bytes(bytes[4..=5].try_into()?),
-        ancount: u16::from_le_bytes(bytes[6..=7].try_into()?),
-        nscount: u16::from_le_bytes(bytes[8..=9].try_into()?),
-        arcount: u16::from_le_bytes(bytes[10..=11].try_into()?),
+        qdcount: u16::from_be_bytes(bytes[4..=5].try_into()?),
+        ancount: u16::from_be_bytes(bytes[6..=7].try_into()?),
+        nscount: u16::from_be_bytes(bytes[8..=9].try_into()?),
+        arcount: u16::from_be_bytes(bytes[10..=11].try_into()?),
     };
 
     let mut qname = String::new();
@@ -79,8 +79,11 @@ fn parse_dns_request(bytes: &[u8]) -> Result<Request> {
     let mut next_chunk: usize = bytes[pos] as usize;
 
     while next_chunk != 0 {
-        qname.push_str(String::from_utf8(bytes[pos..=pos+next_chunk].try_into()?)?.as_str());
-        pos += next_chunk;
+        if !qname.is_empty() {
+            qname.push('.');
+        }
+        qname.push_str(std::str::from_utf8(&bytes[pos + 1..pos + 1 + next_chunk])?);
+        pos += next_chunk + 1;
         next_chunk = bytes[pos] as usize;
     }
 
