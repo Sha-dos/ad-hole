@@ -1,7 +1,11 @@
-use std::{net::SocketAddr, sync::Arc};
+mod blocklist;
+
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::Result;
-use tokio::{net::UdpSocket, sync::mpsc};
+use tokio::{net::UdpSocket, sync::Mutex, time::timeout};
+
+use crate::blocklist::Blocklist;
 
 #[derive(Debug)]
 struct Header {
@@ -98,33 +102,105 @@ fn parse_dns_request(bytes: &[u8]) -> Result<Request> {
     Ok(Request { header, question })
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let socket = UdpSocket::bind("0.0.0.0:53".parse::<SocketAddr>()?).await?;
-    let r = Arc::new(socket);
-    let s = r.clone();
+fn build_blocked_answer(request_bytes: &[u8], parsed: &Request) -> Vec<u8> {
+    let (ancount, rcode): (u16, u8) = match parsed.question.qtype {
+        1 | 28 => (1, 0),
+        _ => (0, 3), // NXDOMAIN for record types we can't synthesize
+    };
 
-    let (tx, mut rx) = mpsc::channel::<(Vec<u8>, SocketAddr)>(1_000);
+    let mut resp = Vec::with_capacity(64);
 
-    tokio::spawn(async move {
-        while let Some((bytes, addr)) = rx.recv().await {
-            let len = s.send_to(&bytes, &addr).await.unwrap();
-            println!("{:?} bytes sent", len);
+    // Header
+    resp.extend_from_slice(&parsed.header.id.to_be_bytes());
+    // QR=1, Opcode=0, AA=1, TC=0, RD=request.rd
+    resp.push(0b1000_0100u8 | u8::from(parsed.header.rd));
+    resp.push(rcode); // RA=0, Z=0, RCODE
+    resp.extend_from_slice(&1u16.to_be_bytes());       // QDCOUNT
+    resp.extend_from_slice(&ancount.to_be_bytes());    // ANCOUNT
+    resp.extend_from_slice(&0u16.to_be_bytes());       // NSCOUNT
+    resp.extend_from_slice(&0u16.to_be_bytes());       // ARCOUNT
+
+    // Question section: find the end of the wire-format name then copy qtype+qclass
+    let mut qend = 12;
+    while qend < request_bytes.len() && request_bytes[qend] != 0 {
+        qend += request_bytes[qend] as usize + 1;
+    }
+    qend += 5; // null terminator (1) + qtype (2) + qclass (2)
+    resp.extend_from_slice(&request_bytes[12..qend]);
+
+    // Answer section
+    if ancount == 1 {
+        resp.extend_from_slice(&0xC00Cu16.to_be_bytes()); // name pointer to offset 12
+        match parsed.question.qtype {
+            1 => {
+                resp.extend_from_slice(&1u16.to_be_bytes());   // TYPE A
+                resp.extend_from_slice(&1u16.to_be_bytes());   // CLASS IN
+                resp.extend_from_slice(&60u32.to_be_bytes());  // TTL
+                resp.extend_from_slice(&4u16.to_be_bytes());   // RDLENGTH
+                resp.extend_from_slice(&[0u8; 4]);             // 0.0.0.0
+            }
+            28 => {
+                resp.extend_from_slice(&28u16.to_be_bytes());  // TYPE AAAA
+                resp.extend_from_slice(&1u16.to_be_bytes());   // CLASS IN
+                resp.extend_from_slice(&60u32.to_be_bytes());  // TTL
+                resp.extend_from_slice(&16u16.to_be_bytes());  // RDLENGTH
+                resp.extend_from_slice(&[0u8; 16]);            // ::
+            }
+            _ => unreachable!(),
         }
-    });
-
-    let mut buf = [0; 1024];
-    loop {
-        let (len, addr) = r.recv_from(&mut buf).await?;
-
-        println!("{:?} bytes received from {:?}", len, addr);
-        println!("raw: {:?}", buf);
-        println!("utf8 lossy: {}", String::from_utf8_lossy(&buf));
-
-        tx.send((buf[..len].to_vec(), addr)).await.unwrap();
     }
 
-    Ok(())
+    resp
+}
+
+async fn forward_to_upstream(bytes: &[u8]) -> Result<Vec<u8>> {
+    let upstream = UdpSocket::bind("0.0.0.0:0").await?;
+    upstream.connect("8.8.8.8:53").await?;
+    upstream.send(bytes).await?;
+    let mut buf = vec![0u8; 1024];
+    let n = timeout(Duration::from_secs(5), upstream.recv(&mut buf)).await??;
+    buf.truncate(n);
+    Ok(buf)
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let socket = Arc::new(UdpSocket::bind("0.0.0.0:53".parse::<SocketAddr>()?).await?);
+    let blocklist = Arc::new(Mutex::new(Blocklist::new()));
+
+    tokio::spawn(Blocklist::spawn(blocklist.clone()));
+
+    let mut buf = [0u8; 1024];
+    loop {
+        let (len, addr) = socket.recv_from(&mut buf).await?;
+        let bytes = buf[..len].to_vec();
+        let socket = socket.clone();
+        let blocklist = blocklist.clone();
+
+        tokio::spawn(async move {
+            let Ok(parsed) = parse_dns_request(&bytes) else {
+                println!("Failed to parse DNS request");
+                return;
+            };
+
+            let response = if blocklist.lock().await.check(&parsed.question.qname) {
+                println!("Blocked: {}", parsed.question.qname);
+                build_blocked_answer(&bytes, &parsed)
+            } else {
+                match forward_to_upstream(&bytes).await {
+                    Ok(resp) => resp,
+                    Err(e) => {
+                        println!("Upstream error: {e}");
+                        return;
+                    }
+                }
+            };
+
+            if let Err(e) = socket.send_to(&response, addr).await {
+                println!("Send error: {e}");
+            }
+        });
+    }
 }
 
 
