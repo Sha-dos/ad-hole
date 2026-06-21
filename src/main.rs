@@ -154,13 +154,40 @@ fn build_blocked_answer(request_bytes: &[u8], parsed: &Request) -> Vec<u8> {
 }
 
 async fn forward_to_upstream(bytes: &[u8]) -> Result<Vec<u8>> {
-    let upstream = UdpSocket::bind("0.0.0.0:0").await?;
-    upstream.connect("8.8.8.8:53").await?;
-    upstream.send(bytes).await?;
-    let mut buf = vec![0u8; 1024];
-    let n = timeout(Duration::from_secs(5), upstream.recv(&mut buf)).await??;
-    buf.truncate(n);
-    Ok(buf)
+    for server in ["8.8.8.8:53", "1.1.1.1:53"] {
+        let upstream = UdpSocket::bind("0.0.0.0:0").await?;
+        upstream.connect(server).await?;
+        upstream.send(bytes).await?;
+        let mut buf = vec![0u8; 4096];
+        match timeout(Duration::from_secs(3), upstream.recv(&mut buf)).await {
+            Ok(Ok(n)) => {
+                buf.truncate(n);
+                return Ok(buf);
+            }
+            _ => continue,
+        }
+    }
+    anyhow::bail!("all upstream servers timed out")
+}
+
+fn build_servfail(request_bytes: &[u8], id: u16) -> Vec<u8> {
+    let mut resp = Vec::with_capacity(64);
+    resp.extend_from_slice(&id.to_be_bytes());
+    resp.push(0x80); // QR=1
+    resp.push(0x02); // RCODE=SERVFAIL
+    resp.extend_from_slice(&1u16.to_be_bytes()); // QDCOUNT
+    resp.extend_from_slice(&0u16.to_be_bytes()); // ANCOUNT
+    resp.extend_from_slice(&0u16.to_be_bytes()); // NSCOUNT
+    resp.extend_from_slice(&0u16.to_be_bytes()); // ARCOUNT
+    // Echo the question section so clients can match the response
+    let mut qend = 12;
+    while qend < request_bytes.len() && request_bytes[qend] != 0 {
+        qend += request_bytes[qend] as usize + 1;
+    }
+    if qend + 5 <= request_bytes.len() {
+        resp.extend_from_slice(&request_bytes[12..qend + 5]);
+    }
+    resp
 }
 
 #[tokio::main]
@@ -190,8 +217,8 @@ async fn main() -> anyhow::Result<()> {
                 match forward_to_upstream(&bytes).await {
                     Ok(resp) => resp,
                     Err(e) => {
-                        println!("Upstream error: {e}");
-                        return;
+                        println!("Upstream error for {}: {e}", parsed.question.qname);
+                        build_servfail(&bytes, parsed.header.id)
                     }
                 }
             };
