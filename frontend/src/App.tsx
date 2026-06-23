@@ -1,18 +1,50 @@
-import { Button } from "@/components/ui/button"
+import {useEffect, useState} from "react";
+import {ScrollArea} from "@/components/ui/scroll-area.tsx";
+import {Separator} from "@/components/ui/separator.tsx";
+import React from "react";
+
+interface Blocklist {
+  update_freq: number,
+  last_updated: number,
+  domains: string[],
+}
 
 export function App() {
+  const [blocklist, setBlocklist] = useState<Blocklist | null>();
+
+  useEffect(() => {
+    const fetchBlocklist = async () => {
+      console.log("Fetching");
+      const resp = await fetch("/blocklist");
+      const json = await resp.json();
+
+      console.log(json);
+      setBlocklist(json);
+    }
+
+    // should really be using websockets
+    const interval = setInterval(fetchBlocklist, 500);
+
+    return () => {
+      clearInterval(interval);
+    };
+
+  }, [blocklist]);
+
   return (
     <div className="flex min-h-svh p-6">
       <div className="flex max-w-md min-w-0 flex-col gap-4 text-sm leading-loose">
-        <div>
-          <h1 className="font-medium">Project ready!</h1>
-          <p>You may now add components and start building.</p>
-          <p>We&apos;ve already added the button component for you.</p>
-          <Button className="mt-2">Button</Button>
-        </div>
-        <div className="font-mono text-xs text-muted-foreground">
-          (Press <kbd>d</kbd> to toggle dark mode)
-        </div>
+        <ScrollArea className="h-72 w-48 rounded-md border">
+          <div className="p-4">
+            <h4 className="mb-4 text-sm leading-none font-medium">Blocked Domains</h4>
+            {blocklist ? (blocklist.domains.map((tag) => (
+              <React.Fragment key={tag}>
+                <div className="text-sm">{tag}</div>
+                <Separator className="my-2" />
+              </React.Fragment>
+            ))) : <div className="text-sm">No domains</div>}
+          </div>
+        </ScrollArea>
       </div>
     </div>
   )

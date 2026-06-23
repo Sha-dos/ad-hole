@@ -54,7 +54,7 @@ impl Server {
         Json(json!({
             "update_freq": guard.update_freq.as_secs(),
             "last_update": guard.last_update.elapsed().as_secs(),
-            "domains": guard.domains,
+            "domains": guard.domains.iter().cloned().collect::<Vec<String>>(),
         }))
     }
 
