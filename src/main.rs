@@ -1,4 +1,5 @@
 mod blocklist;
+mod server;
 
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
@@ -6,6 +7,7 @@ use anyhow::Result;
 use tokio::{net::UdpSocket, sync::Mutex, time::timeout};
 
 use crate::blocklist::Blocklist;
+use crate::server::Server;
 
 #[derive(Debug)]
 struct Header {
@@ -196,6 +198,8 @@ async fn main() -> anyhow::Result<()> {
     let blocklist = Arc::new(Mutex::new(Blocklist::new()));
 
     tokio::spawn(Blocklist::spawn(blocklist.clone()));
+    
+    tokio::spawn(Server::run(blocklist.clone()));
 
     let mut buf = [0u8; 1024];
     loop {
