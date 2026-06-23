@@ -5,14 +5,29 @@ use std::{
 };
 
 use tokio::{sync::Mutex, time::sleep};
+use serde::{Serialize, Serializer};
+use serde::ser::SerializeStruct;
 
 const URL: &str =
     "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt";
 
 pub struct Blocklist {
-    update_freq: Duration,
-    last_update: Instant,
-    domains: HashSet<String>,
+    pub update_freq: Duration,
+    pub last_update: Instant,
+    pub domains: HashSet<String>,
+}
+
+impl Serialize for Blocklist {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer
+    {
+        let mut state = serializer.serialize_struct("Blocklist", 3)?;
+        state.serialize_field("update_freq", &self.update_freq.as_secs())?;
+        state.serialize_field("last_update", &self.last_update.elapsed().as_secs())?;
+        state.serialize_field("domains", &self.domains)?;
+        state.end()
+    }
 }
 
 impl Blocklist {
