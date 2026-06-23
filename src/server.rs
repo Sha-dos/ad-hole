@@ -20,7 +20,7 @@ impl Server {
     pub async fn run(blocklist: Arc<Mutex<Blocklist>>) {
         let app = Router::new()
             .route("/", get(|| async { "Hello, World!" }))
-            .route("/blocklist", get(Self::get_blocklist).patch(Self::patch_blocklist))
+            .route("/blocklist", get(Self::get_blocklist).post(Self::patch_blocklist))
             .with_state(blocklist);
 
         let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
@@ -36,7 +36,7 @@ impl Server {
         }))
     }
 
-    async fn patch_blocklist(Json(payload): Json<PatchBlocklist>, State(blocklist): State<Arc<Mutex<Blocklist>>>) -> Json<Value> {
+    async fn patch_blocklist(State(blocklist): State<Arc<Mutex<Blocklist>>>, Json(payload): Json<PatchBlocklist>) -> Json<Value> {
         let mut guard = blocklist.lock().await;
 
         if let Some(update_freq) = payload.update_freq {
