@@ -79,6 +79,8 @@ impl Server {
 
         match payload.action.as_str() {
             "add" => {
+                println!("Added {} to blocklist", payload.domain);
+
                 guard.domains.insert(payload.domain.clone());
                 guard.user_added.insert(payload.domain);
 
@@ -88,6 +90,8 @@ impl Server {
                 }))
             },
             "remove" => {
+                println!("Removed {} to blocklist", payload.domain);
+
                 guard.domains.remove(&payload.domain);
                 guard.user_removed.insert(payload.domain);
 
