@@ -1,10 +1,10 @@
 use std::sync::Arc;
 use std::time::Duration;
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::{header, StatusCode, Uri};
 use axum::{Json, Router};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use rust_embed::RustEmbed;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -18,15 +18,22 @@ struct Assets;
 pub struct Server;
 
 #[derive(Deserialize)]
+struct PatchUpdateFreq {
+    update_freq: u64,
+}
+
+#[derive(Deserialize)]
 struct PatchBlocklist {
-    update_freq: Option<u64>,
-    domains: Option<Vec<String>>,
+    domain: String,
+    action: String, // "add" or "remove"
 }
 
 impl Server {
     pub async fn run(blocklist: Arc<Mutex<Blocklist>>) {
         let app = Router::new()
-            .route("/blocklist", get(Self::get_blocklist).post(Self::patch_blocklist))
+            .route("/check_blocklist/{domain}", get(Self::check_blocklist))
+            .route("/set_update_freq", post(Self::handle_update_freq))
+            .route("/update_blocklist", post(Self::handle_update_blocklist))
             .with_state(blocklist)
             .fallback(Self::frontend);
 
@@ -49,30 +56,48 @@ impl Server {
         }
     }
 
-    async fn get_blocklist(State(blocklist): State<Arc<Mutex<Blocklist>>>) -> Json<Value> {
+    async fn check_blocklist(Path(domain): Path<String>, State(blocklist): State<Arc<Mutex<Blocklist>>>) -> Json<Value> {
         let guard = blocklist.lock().await;
+
         Json(json!({
-            "update_freq": guard.update_freq.as_secs(),
-            "last_update": guard.last_update.elapsed().as_secs(),
-            "domains": guard.domains.iter().cloned().collect::<Vec<String>>(),
+            "blocked": guard.check(&*domain),
         }))
     }
 
-    async fn patch_blocklist(State(blocklist): State<Arc<Mutex<Blocklist>>>, Json(payload): Json<PatchBlocklist>) -> Json<Value> {
+    async fn handle_update_freq(State(blocklist): State<Arc<Mutex<Blocklist>>>, Json(payload): Json<PatchUpdateFreq>) -> Json<Value> {
         let mut guard = blocklist.lock().await;
 
-        if let Some(update_freq) = payload.update_freq {
-            guard.update_freq = Duration::from_secs(update_freq);
-        }
-
-        if let Some(domains) = payload.domains {
-            for domain in domains {
-                guard.domains.insert(domain);
-            }
-        }
+        guard.update_freq = Duration::from_secs(payload.update_freq);
 
         Json(json!({
-            "status": "success"
+            "status": "success",
         }))
+    }
+
+    async fn handle_update_blocklist(State(blocklist): State<Arc<Mutex<Blocklist>>>, Json(payload): Json<PatchBlocklist>) -> Json<Value> {
+        let mut guard = blocklist.lock().await;
+
+        match payload.action.as_str() {
+            "add" => {
+                guard.domains.insert(payload.domain);
+                Json(json!({
+                    "status": "success",
+                    "action": "added",
+                }))
+            },
+            "remove" => {
+                guard.domains.remove(&payload.domain);
+                Json(json!({
+                    "status": "success",
+                    "action": "removed",
+                }))
+            },
+            _ => {
+                Json(json!({
+                    "status": "error",
+                    "message": "Invalid action",
+                }))
+            }
+        }
     }
 }
