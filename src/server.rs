@@ -90,7 +90,7 @@ impl Server {
                 }))
             },
             "remove" => {
-                println!("Removed {} to blocklist", payload.domain);
+                println!("Removed {} from blocklist", payload.domain);
 
                 guard.domains.remove(&payload.domain);
                 guard.user_removed.insert(payload.domain);
