@@ -8,7 +8,7 @@ use tokio::{sync::Mutex, time::sleep};
 use serde::{Serialize, Serializer};
 use serde::ser::SerializeStruct;
 
-const URL: &str =
+const DEFAULT_URL: &str =
     "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt";
 
 pub struct Blocklist {
@@ -17,6 +17,7 @@ pub struct Blocklist {
     pub domains: HashSet<String>,
     pub user_added: HashSet<String>,
     pub user_removed: HashSet<String>,
+    pub url: String,
 }
 
 impl Serialize for Blocklist {
@@ -40,39 +41,61 @@ impl Blocklist {
             domains: HashSet::new(),
             user_added: HashSet::new(),
             user_removed: HashSet::new(),
+            url: DEFAULT_URL.to_string(),
         }
     }
 
     pub async fn spawn(this: Arc<Mutex<Self>>) -> anyhow::Result<()> {
         loop {
-            if let Ok(resp) = reqwest::get(URL).await {
+            println!("Updating blocklist");
+            let mut guard = this.lock().await;
+            match guard.update().await {
+                Ok(_) => {
+                    println!("Blocklist updated successfully");
+                }
+                Err(e) => {
+                    println!("Failed to update blocklist: {}", e);
+                    sleep(Duration::from_secs(60)).await;
+                    continue;
+                }
+            }
+
+            guard.last_update = Instant::now();
+            let update_freq = guard.update_freq;
+            drop(guard);
+
+            sleep(update_freq).await;
+        }
+    }
+
+    pub async fn update(&mut self) -> anyhow::Result<()> {
+        match reqwest::get(self.url.clone()).await {
+            Ok(resp) => {
                 let text = resp.text().await?;
 
-                let mut guard = this.lock().await;
-                guard.domains.clear();
+                self.domains.clear();
                 for line in text.lines() {
                     if line.contains('#') {
                         continue;
                     }
-                    guard.domains.insert(line.to_string());
+                    self.domains.insert(line.to_string());
                 }
 
-                let user_added = guard.user_added.clone();
-                guard.domains.extend(user_added);
+                let user_added = self.user_added.clone();
+                self.domains.extend(user_added);
 
-                let user_removed = guard.user_removed.clone();
+                let user_removed = self.user_removed.clone();
                 for domain in user_removed {
-                    guard.domains.remove(&domain);
+                    self.domains.remove(&domain);
                 }
 
-                guard.last_update = Instant::now();
-                let update_freq = guard.update_freq;
-                drop(guard);
+                self.last_update = Instant::now();
+                Ok(())
+            }
 
-                sleep(update_freq).await;
-            } else {
-                println!("Failed to fetch");
-                sleep(Duration::from_secs(60)).await;
+            Err(e) => {
+                println!("Failed to fetch blocklist: {}", e);
+                anyhow::bail!("Failed to fetch blocklist: {}", e);
             }
         }
     }

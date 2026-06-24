@@ -28,12 +28,18 @@ struct PatchBlocklist {
     action: String, // "add" or "remove"
 }
 
+#[derive(Deserialize)]
+struct PatchSource {
+    url: String,
+}
+
 impl Server {
     pub async fn run(blocklist: Arc<Mutex<Blocklist>>) {
         let app = Router::new()
             .route("/check_blocklist/{domain}", get(Self::check_blocklist))
             .route("/set_update_freq", post(Self::handle_update_freq))
             .route("/update_blocklist", post(Self::handle_update_blocklist))
+            .route("/source", get(Self::handle_get_source).post(Self::handle_change_source))
             .with_state(blocklist)
             .fallback(Self::frontend);
 
@@ -107,5 +113,34 @@ impl Server {
                 }))
             }
         }
+    }
+
+    async fn handle_get_source(State(blocklist): State<Arc<Mutex<Blocklist>>>) -> Json<Value> {
+        let guard = blocklist.lock().await;
+        Json(json!({ "url": guard.url }))
+    }
+
+    async fn handle_change_source(State(blocklist): State<Arc<Mutex<Blocklist>>>, Json(payload): Json<PatchSource>) -> Json<Value> {
+        let mut guard = blocklist.lock().await;
+        
+        guard.url = payload.url;
+        
+        match guard.update().await {
+            Ok(_) => {
+                println!("Blocklist source changed to {}", guard.url);
+                Json(json!({
+                    "status": "success",
+                    "new_url": guard.url,
+                }))
+            }
+            Err(e) => {
+                println!("Failed to update blocklist after changing source: {}", e);
+                Json(json!({
+                    "status": "error",
+                    "message": format!("Failed to update blocklist after changing source: {}", e),
+                }))
+            }
+        }
+        
     }
 }
