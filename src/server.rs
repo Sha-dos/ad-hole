@@ -79,7 +79,9 @@ impl Server {
 
         match payload.action.as_str() {
             "add" => {
-                guard.domains.insert(payload.domain);
+                guard.domains.insert(payload.domain.clone());
+                guard.user_added.insert(payload.domain);
+
                 Json(json!({
                     "status": "success",
                     "action": "added",
@@ -87,6 +89,8 @@ impl Server {
             },
             "remove" => {
                 guard.domains.remove(&payload.domain);
+                guard.user_removed.insert(payload.domain);
+
                 Json(json!({
                     "status": "success",
                     "action": "removed",

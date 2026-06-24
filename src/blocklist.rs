@@ -15,6 +15,8 @@ pub struct Blocklist {
     pub update_freq: Duration,
     pub last_update: Instant,
     pub domains: HashSet<String>,
+    pub user_added: HashSet<String>,
+    pub user_removed: HashSet<String>,
 }
 
 impl Serialize for Blocklist {
@@ -36,6 +38,8 @@ impl Blocklist {
             update_freq: Duration::from_secs(24 * 60 * 60),
             last_update: Instant::now(),
             domains: HashSet::new(),
+            user_added: HashSet::new(),
+            user_removed: HashSet::new(),
         }
     }
 
@@ -52,6 +56,15 @@ impl Blocklist {
                     }
                     guard.domains.insert(line.to_string());
                 }
+
+                let user_added = guard.user_added.clone();
+                guard.domains.extend(user_added);
+
+                let user_removed = guard.user_removed.clone();
+                for domain in user_removed {
+                    guard.domains.remove(&domain);
+                }
+
                 guard.last_update = Instant::now();
                 let update_freq = guard.update_freq;
                 drop(guard);
