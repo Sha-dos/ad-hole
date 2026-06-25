@@ -1,0 +1,21 @@
+[Unit]
+Description=ad-hole DNS sinkhole
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/ad-hole
+WorkingDirectory=/var/lib/ad-hole
+Restart=on-failure
+RestartSec=5
+
+# Required to bind port 53 without running as root
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+User=ad-hole
+Group=ad-hole
+
+[Install]
+WantedBy=multi-user.target
