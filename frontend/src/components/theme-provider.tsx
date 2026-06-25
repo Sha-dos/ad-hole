@@ -172,7 +172,7 @@ export function ThemeProvider({
       })
     }
 
-    window.addEventListener("keydown", handleKeyDown)
+    // window.addEventListener("keydown", handleKeyDown)
 
     return () => {
       window.removeEventListener("keydown", handleKeyDown)
