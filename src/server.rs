@@ -90,6 +90,13 @@ impl Server {
                 guard.domains.insert(payload.domain.clone());
                 guard.user_added.insert(payload.domain);
 
+                if guard.save_config().await.is_err() {
+                    return Json(json!({
+                        "status": "error",
+                        "message": "Failed to save config",
+                    }));
+                }
+
                 Json(json!({
                     "status": "success",
                     "action": "added",
@@ -100,6 +107,13 @@ impl Server {
 
                 guard.domains.remove(&payload.domain);
                 guard.user_removed.insert(payload.domain);
+
+                if guard.save_config().await.is_err() {
+                    return Json(json!({
+                        "status": "error",
+                        "message": "Failed to save config",
+                    }));
+                }
 
                 Json(json!({
                     "status": "success",
