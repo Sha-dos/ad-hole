@@ -1,16 +1,16 @@
-use std::sync::Arc;
-use std::time::Duration;
+use crate::blocklist::Blocklist;
 use axum::extract::{Path, State};
-use axum::http::{header, StatusCode, Uri};
-use axum::{Json, Router};
+use axum::http::{StatusCode, Uri, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
+use axum::{Json, Router};
 use rust_embed::RustEmbed;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
 use tracing::{error, info};
-use crate::blocklist::Blocklist;
 
 #[derive(RustEmbed)]
 #[folder = "frontend/dist/"]
@@ -40,11 +40,16 @@ impl Server {
             .route("/check_blocklist/{domain}", get(Self::check_blocklist))
             .route("/set_update_freq", post(Self::handle_update_freq))
             .route("/update_blocklist", post(Self::handle_update_blocklist))
-            .route("/source", get(Self::handle_get_source).post(Self::handle_change_source))
+            .route(
+                "/source",
+                get(Self::handle_get_source).post(Self::handle_change_source),
+            )
             .with_state(blocklist)
             .fallback(Self::frontend);
 
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await.unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
+            .await
+            .unwrap();
         axum::serve(listener, app).await.unwrap();
     }
 
@@ -54,7 +59,11 @@ impl Server {
         match Assets::get(path) {
             Some(content) => {
                 let mime = mime_guess::from_path(path).first_or_octet_stream();
-                ([(header::CONTENT_TYPE, mime.as_ref().to_owned())], content.data).into_response()
+                (
+                    [(header::CONTENT_TYPE, mime.as_ref().to_owned())],
+                    content.data,
+                )
+                    .into_response()
             }
             None => match Assets::get("index.html") {
                 Some(index) => Html(index.data).into_response(),
@@ -63,7 +72,10 @@ impl Server {
         }
     }
 
-    async fn check_blocklist(Path(domain): Path<String>, State(blocklist): State<Arc<Mutex<Blocklist>>>) -> Json<Value> {
+    async fn check_blocklist(
+        Path(domain): Path<String>,
+        State(blocklist): State<Arc<Mutex<Blocklist>>>,
+    ) -> Json<Value> {
         let guard = blocklist.lock().await;
 
         Json(json!({
@@ -71,7 +83,10 @@ impl Server {
         }))
     }
 
-    async fn handle_update_freq(State(blocklist): State<Arc<Mutex<Blocklist>>>, Json(payload): Json<PatchUpdateFreq>) -> Json<Value> {
+    async fn handle_update_freq(
+        State(blocklist): State<Arc<Mutex<Blocklist>>>,
+        Json(payload): Json<PatchUpdateFreq>,
+    ) -> Json<Value> {
         let mut guard = blocklist.lock().await;
 
         guard.update_freq = Duration::from_secs(payload.update_freq);
@@ -81,7 +96,10 @@ impl Server {
         }))
     }
 
-    async fn handle_update_blocklist(State(blocklist): State<Arc<Mutex<Blocklist>>>, Json(payload): Json<PatchBlocklist>) -> Json<Value> {
+    async fn handle_update_blocklist(
+        State(blocklist): State<Arc<Mutex<Blocklist>>>,
+        Json(payload): Json<PatchBlocklist>,
+    ) -> Json<Value> {
         let mut guard = blocklist.lock().await;
 
         match payload.action.as_str() {
@@ -102,7 +120,7 @@ impl Server {
                     "status": "success",
                     "action": "added",
                 }))
-            },
+            }
             "remove" => {
                 info!(domain = %payload.domain, "removed from blocklist");
 
@@ -120,13 +138,11 @@ impl Server {
                     "status": "success",
                     "action": "removed",
                 }))
-            },
-            _ => {
-                Json(json!({
-                    "status": "error",
-                    "message": "Invalid action",
-                }))
             }
+            _ => Json(json!({
+                "status": "error",
+                "message": "Invalid action",
+            })),
         }
     }
 
@@ -135,11 +151,14 @@ impl Server {
         Json(json!({ "url": guard.url }))
     }
 
-    async fn handle_change_source(State(blocklist): State<Arc<Mutex<Blocklist>>>, Json(payload): Json<PatchSource>) -> Json<Value> {
+    async fn handle_change_source(
+        State(blocklist): State<Arc<Mutex<Blocklist>>>,
+        Json(payload): Json<PatchSource>,
+    ) -> Json<Value> {
         let mut guard = blocklist.lock().await;
-        
+
         guard.url = payload.url;
-        
+
         match guard.update().await {
             Ok(_) => {
                 info!(url = %guard.url, "blocklist source changed");
@@ -156,6 +175,5 @@ impl Server {
                 }))
             }
         }
-        
     }
 }

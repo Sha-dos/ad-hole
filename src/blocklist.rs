@@ -4,11 +4,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use tokio::{sync::Mutex, time::sleep};
-use tracing::{error, info, warn};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde::de::{self, MapAccess, Visitor};
 use serde::ser::SerializeStruct;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use tokio::{sync::Mutex, time::sleep};
+use tracing::{error, info, warn};
 
 const DEFAULT_URL: &str =
     "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt";
@@ -25,7 +25,7 @@ pub struct Blocklist {
 impl Serialize for Blocklist {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: Serializer
+        S: Serializer,
     {
         let mut state = serializer.serialize_struct("Blocklist", 3)?;
         state.serialize_field("update_freq", &self.update_freq.as_secs())?;
@@ -44,7 +44,13 @@ impl<'de> Deserialize<'de> for Blocklist {
     {
         #[derive(Deserialize)]
         #[serde(field_identifier, rename_all = "snake_case")]
-        enum Field { UpdateFreq, LastUpdate, UserAdded, UserRemoved, Url }
+        enum Field {
+            UpdateFreq,
+            LastUpdate,
+            UserAdded,
+            UserRemoved,
+            Url,
+        }
 
         struct BlocklistVisitor;
 
@@ -75,8 +81,10 @@ impl<'de> Deserialize<'de> for Blocklist {
                     }
                 }
 
-                let update_freq = update_freq.ok_or_else(|| de::Error::missing_field("update_freq"))?;
-                let last_update_secs = last_update_secs.ok_or_else(|| de::Error::missing_field("last_update"))?;
+                let update_freq =
+                    update_freq.ok_or_else(|| de::Error::missing_field("update_freq"))?;
+                let last_update_secs =
+                    last_update_secs.ok_or_else(|| de::Error::missing_field("last_update"))?;
 
                 let last_update = Instant::now()
                     .checked_sub(Duration::from_secs(last_update_secs))
@@ -93,7 +101,13 @@ impl<'de> Deserialize<'de> for Blocklist {
             }
         }
 
-        const FIELDS: &[&str] = &["update_freq", "last_update", "user_added", "user_removed", "url"];
+        const FIELDS: &[&str] = &[
+            "update_freq",
+            "last_update",
+            "user_added",
+            "user_removed",
+            "url",
+        ];
         deserializer.deserialize_struct("Blocklist", FIELDS, BlocklistVisitor)
     }
 }

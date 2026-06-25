@@ -6,9 +6,9 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use anyhow::Result;
 use tokio::{net::UdpSocket, sync::Mutex, time::timeout};
 
-use tracing::{error, info, warn};
 use crate::blocklist::Blocklist;
 use crate::server::Server;
+use tracing::{error, info, warn};
 
 #[derive(Debug)]
 struct Header {
@@ -201,7 +201,7 @@ async fn main() -> anyhow::Result<()> {
     let blocklist = Arc::new(Mutex::new(Blocklist::new()));
 
     tokio::spawn(Blocklist::spawn(blocklist.clone()));
-    
+
     tokio::spawn(Server::run(blocklist.clone()));
 
     let mut buf = [0u8; 1024];
