@@ -5,6 +5,7 @@ use std::{
 };
 
 use tokio::{sync::Mutex, time::sleep};
+use tracing::{error, info, warn};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde::de::{self, MapAccess, Visitor};
 use serde::ser::SerializeStruct;
@@ -115,14 +116,14 @@ impl Blocklist {
         drop(guard);
 
         loop {
-            println!("Updating blocklist");
+            info!("updating blocklist");
             let mut guard = this.lock().await;
             match guard.update().await {
                 Ok(_) => {
-                    println!("Blocklist updated successfully");
+                    info!("blocklist updated successfully");
                 }
                 Err(e) => {
-                    println!("Failed to update blocklist: {}", e);
+                    error!(error = %e, "failed to update blocklist");
                     sleep(Duration::from_secs(60)).await;
                     continue;
                 }
@@ -162,7 +163,7 @@ impl Blocklist {
             }
 
             Err(e) => {
-                println!("Failed to fetch blocklist: {}", e);
+                error!(error = %e, "failed to fetch blocklist");
                 anyhow::bail!("Failed to fetch blocklist: {}", e);
             }
         }
@@ -189,7 +190,7 @@ impl Blocklist {
                 self.url = loaded.url;
             }
             Err(e) => {
-                println!("Failed to read config file: {}", e);
+                warn!(error = %e, "failed to read config file, starting fresh");
             }
         }
         Ok(())

@@ -9,6 +9,7 @@ use rust_embed::RustEmbed;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
+use tracing::{error, info};
 use crate::blocklist::Blocklist;
 
 #[derive(RustEmbed)]
@@ -85,7 +86,7 @@ impl Server {
 
         match payload.action.as_str() {
             "add" => {
-                println!("Added {} to blocklist", payload.domain);
+                info!(domain = %payload.domain, "added to blocklist");
 
                 guard.domains.insert(payload.domain.clone());
                 guard.user_added.insert(payload.domain);
@@ -103,7 +104,7 @@ impl Server {
                 }))
             },
             "remove" => {
-                println!("Removed {} from blocklist", payload.domain);
+                info!(domain = %payload.domain, "removed from blocklist");
 
                 guard.domains.remove(&payload.domain);
                 guard.user_removed.insert(payload.domain);
@@ -141,14 +142,14 @@ impl Server {
         
         match guard.update().await {
             Ok(_) => {
-                println!("Blocklist source changed to {}", guard.url);
+                info!(url = %guard.url, "blocklist source changed");
                 Json(json!({
                     "status": "success",
                     "new_url": guard.url,
                 }))
             }
             Err(e) => {
-                println!("Failed to update blocklist after changing source: {}", e);
+                error!(error = %e, "failed to update blocklist after source change");
                 Json(json!({
                     "status": "error",
                     "message": format!("Failed to update blocklist after changing source: {}", e),

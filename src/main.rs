@@ -6,6 +6,7 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use anyhow::Result;
 use tokio::{net::UdpSocket, sync::Mutex, time::timeout};
 
+use tracing::{error, info, warn};
 use crate::blocklist::Blocklist;
 use crate::server::Server;
 
@@ -194,6 +195,8 @@ fn build_servfail(request_bytes: &[u8], id: u16) -> Vec<u8> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt::init();
+
     let socket = Arc::new(UdpSocket::bind("0.0.0.0:53".parse::<SocketAddr>()?).await?);
     let blocklist = Arc::new(Mutex::new(Blocklist::new()));
 
@@ -210,25 +213,25 @@ async fn main() -> anyhow::Result<()> {
 
         tokio::spawn(async move {
             let Ok(parsed) = parse_dns_request(&bytes) else {
-                println!("Failed to parse DNS request");
+                warn!("failed to parse DNS request");
                 return;
             };
 
             let response = if blocklist.lock().await.check(&parsed.question.qname) {
-                println!("Blocked: {}", parsed.question.qname);
+                info!(domain = %parsed.question.qname, "blocked");
                 build_blocked_answer(&bytes, &parsed)
             } else {
                 match forward_to_upstream(&bytes).await {
                     Ok(resp) => resp,
                     Err(e) => {
-                        println!("Upstream error for {}: {e}", parsed.question.qname);
+                        error!(domain = %parsed.question.qname, error = %e, "upstream error");
                         build_servfail(&bytes, parsed.header.id)
                     }
                 }
             };
 
             if let Err(e) = socket.send_to(&response, addr).await {
-                println!("Send error: {e}");
+                error!(error = %e, "send error");
             }
         });
     }
