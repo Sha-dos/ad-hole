@@ -107,7 +107,8 @@ impl Server {
                 info!(domain = %payload.domain, "added to blocklist");
 
                 guard.domains.insert(payload.domain.clone());
-                guard.user_added.insert(payload.domain);
+                guard.user_added.insert(payload.domain.clone());
+                guard.user_removed.remove(&payload.domain);
 
                 if guard.save_config().await.is_err() {
                     return Json(json!({
@@ -125,7 +126,8 @@ impl Server {
                 info!(domain = %payload.domain, "removed from blocklist");
 
                 guard.domains.remove(&payload.domain);
-                guard.user_removed.insert(payload.domain);
+                guard.user_removed.insert(payload.domain.clone());
+                guard.user_added.remove(&payload.domain);
 
                 if guard.save_config().await.is_err() {
                     return Json(json!({
