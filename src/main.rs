@@ -195,7 +195,7 @@ fn build_servfail(request_bytes: &[u8], id: u16) -> Vec<u8> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt().with_env_filter("info").init();
 
     let socket = Arc::new(UdpSocket::bind("0.0.0.0:53".parse::<SocketAddr>()?).await?);
     let blocklist = Arc::new(Mutex::new(Blocklist::new()));
