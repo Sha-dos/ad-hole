@@ -32,7 +32,7 @@ struct PatchBlocklist {
 #[derive(Deserialize)]
 struct PatchSources {
     url: String,
-    action: String,      // "add", "remove", "toggle"
+    action: String, // "add", "remove", "toggle"
     enabled: Option<bool>,
 }
 
@@ -169,7 +169,10 @@ impl Server {
                         "message": "Source already exists",
                     }));
                 }
-                guard.sources.push(Source { url: payload.url.clone(), enabled: true });
+                guard.sources.push(Source {
+                    url: payload.url.clone(),
+                    enabled: true,
+                });
                 info!(url = %payload.url, "added blocklist source");
 
                 match guard.update().await {
@@ -214,7 +217,9 @@ impl Server {
 
                 if let Err(e) = guard.update().await {
                     error!(error = %e, "update after toggle failed");
-                    return Json(json!({ "status": "error", "message": "Failed to update blocklist after toggle" }));
+                    return Json(
+                        json!({ "status": "error", "message": "Failed to update blocklist after toggle" }),
+                    );
                 }
 
                 drop(guard);
