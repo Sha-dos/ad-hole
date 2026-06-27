@@ -157,9 +157,19 @@ fn build_blocked_answer(request_bytes: &[u8], parsed: &Request) -> Vec<u8> {
 }
 
 async fn forward_to_upstream(bytes: &[u8]) -> Result<Vec<u8>> {
-    for server in ["8.8.8.8:53", "1.1.1.1:53"] {
-        let upstream = UdpSocket::bind("0.0.0.0:0").await?;
-        upstream.connect(server).await?;
+    for server in [
+        "8.8.8.8:53",
+        "1.1.1.1:53",
+        "[2001:4860:4860::8888]:53",
+        "[2606:4700:4700::1111]:53",
+    ] {
+        let addr: SocketAddr = server.parse()?;
+        let bind_addr = if addr.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" };
+        let upstream = match UdpSocket::bind(bind_addr).await {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        upstream.connect(addr).await?;
         upstream.send(bytes).await?;
         let mut buf = vec![0u8; 4096];
         match timeout(Duration::from_secs(3), upstream.recv(&mut buf)).await {
@@ -197,7 +207,7 @@ fn build_servfail(request_bytes: &[u8], id: u16) -> Vec<u8> {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().with_env_filter("info").init();
 
-    let socket = Arc::new(UdpSocket::bind("0.0.0.0:53".parse::<SocketAddr>()?).await?);
+    let socket = Arc::new(UdpSocket::bind("[::]:53".parse::<SocketAddr>()?).await?);
     let blocklist = Arc::new(Mutex::new(Blocklist::new()));
 
     tokio::spawn(Blocklist::spawn(blocklist.clone()));
