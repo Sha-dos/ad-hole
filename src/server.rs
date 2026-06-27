@@ -42,6 +42,7 @@ impl Server {
             .route("/check_blocklist/{domain}", get(Self::check_blocklist))
             .route("/set_update_freq", post(Self::handle_update_freq))
             .route("/update_blocklist", post(Self::handle_update_blocklist))
+            .route("/overrides", get(Self::handle_get_overrides))
             .route(
                 "/sources",
                 get(Self::handle_get_sources).post(Self::handle_patch_sources),
@@ -148,6 +149,17 @@ impl Server {
                 "message": "Invalid action",
             })),
         }
+    }
+
+    async fn handle_get_overrides(State(blocklist): State<Arc<Mutex<Blocklist>>>) -> Json<Value> {
+        let guard = blocklist.lock().await;
+        let mut added: Vec<&str> = guard.user_added.iter().map(|s| s.as_str()).collect();
+        let mut removed: Vec<&str> = guard.user_removed.iter().map(|s| s.as_str()).collect();
+
+        added.sort_unstable();
+        removed.sort_unstable();
+
+        Json(json!({ "added": added, "removed": removed }))
     }
 
     async fn handle_get_sources(State(blocklist): State<Arc<Mutex<Blocklist>>>) -> Json<Value> {

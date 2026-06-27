@@ -13,7 +13,12 @@ interface Source {
   enabled: boolean
 }
 
-type Action = "block" | "unblock" | "source-add" | "source-remove"
+interface Overrides {
+  added: string[]
+  removed: string[]
+}
+
+type Action = "block" | "unblock" | "source-add" | "source-remove" | "override-unblock" | "override-unremove"
 
 interface Pending {
   action: Action
@@ -25,6 +30,8 @@ const TITLES: Record<Action, string> = {
   unblock: "Confirm unblock",
   "source-add": "Add source",
   "source-remove": "Remove source",
+  "override-unblock": "Remove override",
+  "override-unremove": "Remove override",
 }
 
 function ConfirmBody({ pending }: { pending: Pending }) {
@@ -32,11 +39,14 @@ function ConfirmBody({ pending }: { pending: Pending }) {
   if (pending.action === "block") return <>Block {val}?</>
   if (pending.action === "unblock") return <>Unblock {val}?</>
   if (pending.action === "source-add") return <>Add {val} as a blocklist source?</>
-  return <>Remove {val}? This source will no longer be fetched.</>
+  if (pending.action === "source-remove") return <>Remove {val}? This source will no longer be fetched.</>
+  if (pending.action === "override-unblock") return <>Remove manual block on {val}? It may still be blocked by a source list.</>
+  return <>Remove manual unblock on {val}? It may be re-blocked by a source list.</>
 }
 
 export function App() {
   const [sources, setSources] = useState<Source[]>([])
+  const [overrides, setOverrides] = useState<Overrides>({ added: [], removed: [] })
   const [newSourceUrl, setNewSourceUrl] = useState("")
   const [blockDomain, setBlockDomain] = useState("")
   const [unblockDomain, setUnblockDomain] = useState("")
@@ -47,6 +57,10 @@ export function App() {
     fetch("/sources")
       .then((r) => r.json())
       .then((d) => setSources(d.sources ?? []))
+      .catch(() => {})
+    fetch("/overrides")
+      .then((r) => r.json())
+      .then((d) => setOverrides({ added: d.added ?? [], removed: d.removed ?? [] }))
       .catch(() => {})
   }, [])
 
@@ -80,41 +94,73 @@ export function App() {
     setLoading(true)
     try {
       let res: Response
-      if (pending.action === "block" || pending.action === "unblock") {
+
+      if (pending.action === "block") {
         res = await fetch("/update_blocklist", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: pending.action === "block" ? "add" : "remove",
-            domain: pending.value,
-          }),
+          body: JSON.stringify({ action: "add", domain: pending.value }),
         })
-      } else {
+        if (res.ok) {
+          setBlockDomain("")
+          setOverrides((o) => ({ ...o, added: [...o.added, pending.value].sort() }))
+          toast.success(`${pending.value} blocked`)
+        }
+      } else if (pending.action === "unblock") {
+        res = await fetch("/update_blocklist", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "remove", domain: pending.value }),
+        })
+        if (res.ok) {
+          setUnblockDomain("")
+          setOverrides((o) => ({ ...o, removed: [...o.removed, pending.value].sort() }))
+          toast.success(`${pending.value} unblocked`)
+        }
+      } else if (pending.action === "source-add") {
         res = await fetch("/sources", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            url: pending.value,
-            action: pending.action === "source-add" ? "add" : "remove",
-          }),
+          body: JSON.stringify({ url: pending.value, action: "add" }),
         })
-      }
-
-      if (res.ok) {
-        if (pending.action === "source-add") {
+        if (res.ok) {
           setSources((prev) => [...prev, { url: pending.value, enabled: true }])
           setNewSourceUrl("")
           toast.success("Source added")
-        } else if (pending.action === "source-remove") {
+        }
+      } else if (pending.action === "source-remove") {
+        res = await fetch("/sources", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: pending.value, action: "remove" }),
+        })
+        if (res.ok) {
           setSources((prev) => prev.filter((s) => s.url !== pending.value))
           toast.success("Source removed")
-        } else if (pending.action === "block") {
-          setBlockDomain("")
-          toast.success(`${pending.value} blocked`)
-        } else {
-          setUnblockDomain("")
-          toast.success(`${pending.value} unblocked`)
         }
+      } else if (pending.action === "override-unblock") {
+        res = await fetch("/update_blocklist", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "remove", domain: pending.value }),
+        })
+        if (res.ok) {
+          setOverrides((o) => ({ ...o, added: o.added.filter((d) => d !== pending.value) }))
+          toast.success(`Manual block on ${pending.value} removed`)
+        }
+      } else {
+        res = await fetch("/update_blocklist", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "add", domain: pending.value }),
+        })
+        if (res.ok) {
+          setOverrides((o) => ({ ...o, removed: o.removed.filter((d) => d !== pending.value) }))
+          toast.success(`Manual unblock on ${pending.value} removed`)
+        }
+      }
+
+      if (res!.ok) {
         setPending(null)
       } else {
         toast.error("Something went wrong")
@@ -127,11 +173,10 @@ export function App() {
   }
 
   return (
-    <div className="flex min-h-svh flex-col items-center p-6 pt-12">
-      <div className="flex w-full max-w-3xl flex-col gap-6">
-
-        <div className="flex gap-4">
-          <Field className="flex-1">
+    <div className="min-h-svh p-6 pt-12">
+      <div className="flex gap-4">
+        <div className="flex min-w-0 flex-1 flex-col gap-3">
+          <Field>
             <FieldLabel>Add source</FieldLabel>
             <div className="flex gap-2">
               <Input
@@ -145,7 +190,32 @@ export function App() {
               </Button>
             </div>
           </Field>
-          <Field className="w-44 shrink-0">
+          <div className="rounded-md border">
+            {sources.length === 0 && (
+              <p className="px-3 py-3 text-center text-xs text-muted-foreground">No sources.</p>
+            )}
+            {sources.map((src, i) => (
+              <div key={src.url}>
+                {i > 0 && <Separator />}
+                <div className="flex items-center gap-3 px-3 py-2">
+                  <Switch
+                    checked={src.enabled}
+                    onCheckedChange={(checked) => handleToggle(src.url, checked)}
+                  />
+                  <span className="flex-1 truncate text-xs text-muted-foreground" title={src.url}>
+                    {src.url}
+                  </span>
+                  <Button size="icon-sm" variant="ghost" onClick={() => openConfirm("source-remove", src.url)}>
+                    <Trash2 />
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex w-52 shrink-0 flex-col gap-3">
+          <Field>
             <FieldLabel>Block domain</FieldLabel>
             <div className="flex gap-2">
               <Input
@@ -157,7 +227,26 @@ export function App() {
               <Button onClick={() => openConfirm("block", blockDomain.trim())}>Block</Button>
             </div>
           </Field>
-          <Field className="w-44 shrink-0">
+          <div className="rounded-md border">
+            {overrides.added.length === 0 && (
+              <p className="px-3 py-3 text-center text-xs text-muted-foreground">None.</p>
+            )}
+            {overrides.added.map((domain, i) => (
+              <div key={domain}>
+                {i > 0 && <Separator />}
+                <div className="flex items-center gap-2 px-3 py-2">
+                  <span className="flex-1 truncate text-xs" title={domain}>{domain}</span>
+                  <Button size="icon-sm" variant="ghost" onClick={() => openConfirm("override-unblock", domain)}>
+                    <Trash2 />
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex w-52 shrink-0 flex-col gap-3">
+          <Field>
             <FieldLabel>Unblock domain</FieldLabel>
             <div className="flex gap-2">
               <Input
@@ -169,33 +258,22 @@ export function App() {
               <Button variant="destructive" onClick={() => openConfirm("unblock", unblockDomain.trim())}>Unblock</Button>
             </div>
           </Field>
-        </div>
-
-        <div className="rounded-md border">
-          {sources.length === 0 && (
-            <p className="px-3 py-4 text-center text-xs text-muted-foreground">No sources configured.</p>
-          )}
-          {sources.map((src, i) => (
-            <div key={src.url}>
-              {i > 0 && <Separator />}
-              <div className="flex items-center gap-3 px-3 py-2">
-                <Switch
-                  checked={src.enabled}
-                  onCheckedChange={(checked) => handleToggle(src.url, checked)}
-                />
-                <span className="flex-1 truncate text-xs text-muted-foreground" title={src.url}>
-                  {src.url}
-                </span>
-                <Button
-                  size="icon-sm"
-                  variant="ghost"
-                  onClick={() => openConfirm("source-remove", src.url)}
-                >
-                  <Trash2 />
-                </Button>
+          <div className="rounded-md border">
+            {overrides.removed.length === 0 && (
+              <p className="px-3 py-3 text-center text-xs text-muted-foreground">None.</p>
+            )}
+            {overrides.removed.map((domain, i) => (
+              <div key={domain}>
+                {i > 0 && <Separator />}
+                <div className="flex items-center gap-2 px-3 py-2">
+                  <span className="flex-1 truncate text-xs text-muted-foreground" title={domain}>{domain}</span>
+                  <Button size="icon-sm" variant="ghost" onClick={() => openConfirm("override-unremove", domain)}>
+                    <Trash2 />
+                  </Button>
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
 
       </div>
@@ -213,7 +291,14 @@ export function App() {
               Cancel
             </Button>
             <Button
-              variant={pending?.action === "source-remove" || pending?.action === "unblock" ? "destructive" : "default"}
+              variant={
+                pending?.action === "source-remove" ||
+                pending?.action === "unblock" ||
+                pending?.action === "override-unblock" ||
+                pending?.action === "override-unremove"
+                  ? "destructive"
+                  : "default"
+              }
               disabled={loading}
               onClick={handleConfirm}
             >
