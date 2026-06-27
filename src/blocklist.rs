@@ -13,13 +13,19 @@ use tracing::{error, info, warn};
 const DEFAULT_URL: &str =
     "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt";
 
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Source {
+    pub url: String,
+    pub enabled: bool,
+}
+
 pub struct Blocklist {
     pub update_freq: Duration,
     pub last_update: Instant,
     pub domains: HashSet<String>,
     pub user_added: HashSet<String>,
     pub user_removed: HashSet<String>,
-    pub url: String,
+    pub sources: Vec<Source>,
 }
 
 impl Serialize for Blocklist {
@@ -27,12 +33,12 @@ impl Serialize for Blocklist {
     where
         S: Serializer,
     {
-        let mut state = serializer.serialize_struct("Blocklist", 3)?;
+        let mut state = serializer.serialize_struct("Blocklist", 5)?;
         state.serialize_field("update_freq", &self.update_freq.as_secs())?;
         state.serialize_field("last_update", &self.last_update.elapsed().as_secs())?;
         state.serialize_field("user_added", &self.user_added)?;
         state.serialize_field("user_removed", &self.user_removed)?;
-        state.serialize_field("url", &self.url)?;
+        state.serialize_field("sources", &self.sources)?;
         state.end()
     }
 }
@@ -49,7 +55,8 @@ impl<'de> Deserialize<'de> for Blocklist {
             LastUpdate,
             UserAdded,
             UserRemoved,
-            Url,
+            Sources,
+            Url, // legacy single-source field
         }
 
         struct BlocklistVisitor;
@@ -69,7 +76,8 @@ impl<'de> Deserialize<'de> for Blocklist {
                 let mut last_update_secs: Option<u64> = None;
                 let mut user_added: Option<HashSet<String>> = None;
                 let mut user_removed: Option<HashSet<String>> = None;
-                let mut url: Option<String> = None;
+                let mut sources: Option<Vec<Source>> = None;
+                let mut legacy_url: Option<String> = None;
 
                 while let Some(key) = map.next_key()? {
                     match key {
@@ -77,7 +85,8 @@ impl<'de> Deserialize<'de> for Blocklist {
                         Field::LastUpdate => last_update_secs = Some(map.next_value()?),
                         Field::UserAdded => user_added = Some(map.next_value()?),
                         Field::UserRemoved => user_removed = Some(map.next_value()?),
-                        Field::Url => url = Some(map.next_value()?),
+                        Field::Sources => sources = Some(map.next_value()?),
+                        Field::Url => legacy_url = Some(map.next_value()?),
                     }
                 }
 
@@ -90,13 +99,18 @@ impl<'de> Deserialize<'de> for Blocklist {
                     .checked_sub(Duration::from_secs(last_update_secs))
                     .unwrap_or_else(Instant::now);
 
+                let sources = sources.unwrap_or_else(|| {
+                    let url = legacy_url.unwrap_or_else(|| DEFAULT_URL.to_string());
+                    vec![Source { url, enabled: true }]
+                });
+
                 Ok(Blocklist {
                     update_freq: Duration::from_secs(update_freq),
                     last_update,
                     domains: HashSet::new(),
                     user_added: user_added.unwrap_or_default(),
                     user_removed: user_removed.unwrap_or_default(),
-                    url: url.unwrap_or_else(|| DEFAULT_URL.to_string()),
+                    sources,
                 })
             }
         }
@@ -106,7 +120,7 @@ impl<'de> Deserialize<'de> for Blocklist {
             "last_update",
             "user_added",
             "user_removed",
-            "url",
+            "sources",
         ];
         deserializer.deserialize_struct("Blocklist", FIELDS, BlocklistVisitor)
     }
@@ -120,7 +134,10 @@ impl Blocklist {
             domains: HashSet::new(),
             user_added: HashSet::new(),
             user_removed: HashSet::new(),
-            url: DEFAULT_URL.to_string(),
+            sources: vec![Source {
+                url: DEFAULT_URL.to_string(),
+                enabled: true,
+            }],
         }
     }
 
@@ -152,35 +169,36 @@ impl Blocklist {
     }
 
     pub async fn update(&mut self) -> anyhow::Result<()> {
-        match reqwest::get(self.url.clone()).await {
-            Ok(resp) => {
-                let text = resp.text().await?;
+        self.domains.clear();
 
-                self.domains.clear();
-                for line in text.lines() {
-                    if line.contains('#') {
-                        continue;
+        for source in self.sources.iter().filter(|s| s.enabled) {
+            match reqwest::get(source.url.clone()).await {
+                Ok(resp) => {
+                    let text = resp.text().await?;
+                    for line in text.lines() {
+                        if line.contains('#') {
+                            continue;
+                        }
+                        self.domains.insert(line.to_string());
                     }
-                    self.domains.insert(line.to_string());
+                    info!(url = %source.url, "fetched source");
                 }
-
-                let user_added = self.user_added.clone();
-                self.domains.extend(user_added);
-
-                let user_removed = self.user_removed.clone();
-                for domain in user_removed {
-                    self.domains.remove(&domain);
+                Err(e) => {
+                    error!(error = %e, url = %source.url, "failed to fetch source");
                 }
-
-                self.last_update = Instant::now();
-                Ok(())
-            }
-
-            Err(e) => {
-                error!(error = %e, "failed to fetch blocklist");
-                anyhow::bail!("Failed to fetch blocklist: {}", e);
             }
         }
+
+        let user_added = self.user_added.clone();
+        self.domains.extend(user_added);
+
+        let user_removed = self.user_removed.clone();
+        for domain in user_removed {
+            self.domains.remove(&domain);
+        }
+
+        self.last_update = Instant::now();
+        Ok(())
     }
 
     pub fn check(&self, domain: &str) -> bool {
@@ -201,7 +219,7 @@ impl Blocklist {
                 self.last_update = loaded.last_update;
                 self.user_added = loaded.user_added;
                 self.user_removed = loaded.user_removed;
-                self.url = loaded.url;
+                self.sources = loaded.sources;
             }
             Err(e) => {
                 warn!(error = %e, "failed to read config file, starting fresh");

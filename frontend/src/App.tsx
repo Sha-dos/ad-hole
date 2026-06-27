@@ -1,11 +1,18 @@
 import { Field, FieldLabel } from "@/components/ui/field.tsx"
 import { Input } from "@/components/ui/input.tsx"
 import { Button } from "@/components/ui/button.tsx"
+import { Switch } from "@/components/ui/switch.tsx"
+import { Separator } from "@/components/ui/separator.tsx"
 import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle } from "@/components/ui/dialog.tsx"
-import { Loader2, CheckCircle2, XCircle } from "lucide-react"
+import { Loader2, CheckCircle2, XCircle, Trash2 } from "lucide-react"
 import { useState, useEffect } from "react"
 
-type Action = "add" | "remove" | "source"
+interface Source {
+  url: string
+  enabled: boolean
+}
+
+type Action = "block" | "unblock" | "source-add" | "source-remove"
 type Status = "idle" | "loading" | "success" | "error"
 
 interface Pending {
@@ -14,68 +21,92 @@ interface Pending {
 }
 
 const TITLES: Record<Action, string> = {
-  add: "Confirm block",
-  remove: "Confirm unblock",
-  source: "Confirm source change",
+  block: "Confirm block",
+  unblock: "Confirm unblock",
+  "source-add": "Add source",
+  "source-remove": "Remove source",
 }
 
 function ConfirmBody({ pending }: { pending: Pending }) {
   const val = <span className="font-medium text-foreground break-all">{pending.value}</span>
-  if (pending.action === "add") return <>Block {val}?</>
-  if (pending.action === "remove") return <>Unblock {val}?</>
-  return <>Switch blocklist source to {val}? The new list will be fetched immediately.</>
+  if (pending.action === "block") return <>Block {val}?</>
+  if (pending.action === "unblock") return <>Unblock {val}?</>
+  if (pending.action === "source-add") return <>Add {val} as a blocklist source?</>
+  return <>Remove {val}? This source will no longer be fetched.</>
 }
 
 function SuccessBody({ pending }: { pending: Pending }) {
-  const val = <span className="text-foreground">{pending.value}</span>
-  if (pending.action === "add") return <>{val} blocked successfully.</>
-  if (pending.action === "remove") return <>{val} unblocked successfully.</>
-  return <>Source updated successfully.</>
+  if (pending.action === "block") return <>{pending.value} blocked.</>
+  if (pending.action === "unblock") return <>{pending.value} unblocked.</>
+  if (pending.action === "source-add") return <>Source added.</>
+  return <>Source removed.</>
 }
 
 export function App() {
-  const [addDomain, setAddDomain] = useState("")
-  const [removeDomain, setRemoveDomain] = useState("")
-  const [sourceUrl, setSourceUrl] = useState("")
-  const [currentSource, setCurrentSource] = useState<string | null>(null)
+  const [sources, setSources] = useState<Source[]>([])
+  const [newSourceUrl, setNewSourceUrl] = useState("")
+  const [blockDomain, setBlockDomain] = useState("")
+  const [unblockDomain, setUnblockDomain] = useState("")
   const [pending, setPending] = useState<Pending | null>(null)
   const [status, setStatus] = useState<Status>("idle")
 
   useEffect(() => {
-    fetch("/source")
+    fetch("/sources")
       .then((r) => r.json())
-      .then((d) => setCurrentSource(d.url))
+      .then((d) => setSources(d.sources ?? []))
       .catch(() => {})
   }, [])
 
-  const openConfirm = (action: Action) => {
-    const value =
-      action === "add" ? addDomain.trim()
-      : action === "remove" ? removeDomain.trim()
-      : sourceUrl.trim()
+  const openConfirm = (action: Action, value: string) => {
     if (!value) return
     setPending({ action, value })
     setStatus("idle")
+  }
+
+  const handleToggle = async (url: string, enabled: boolean) => {
+    setSources((prev) => prev.map((s) => (s.url === url ? { ...s, enabled } : s)))
+    await fetch("/sources", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, action: "toggle", enabled }),
+    })
   }
 
   const handleConfirm = async () => {
     if (!pending) return
     setStatus("loading")
     try {
-      const res =
-        pending.action === "source"
-          ? await fetch("/source", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ url: pending.value }),
-            })
-          : await fetch("/update_blocklist", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ action: pending.action, domain: pending.value }),
-            })
+      let res: Response
+      if (pending.action === "block" || pending.action === "unblock") {
+        res = await fetch("/update_blocklist", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: pending.action === "block" ? "add" : "remove",
+            domain: pending.value,
+          }),
+        })
+      } else {
+        res = await fetch("/sources", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            url: pending.value,
+            action: pending.action === "source-add" ? "add" : "remove",
+          }),
+        })
+      }
       if (res.ok) {
-        if (pending.action === "source") setCurrentSource(pending.value)
+        if (pending.action === "source-add") {
+          setSources((prev) => [...prev, { url: pending.value, enabled: true }])
+          setNewSourceUrl("")
+        } else if (pending.action === "source-remove") {
+          setSources((prev) => prev.filter((s) => s.url !== pending.value))
+        } else if (pending.action === "block") {
+          setBlockDomain("")
+        } else {
+          setUnblockDomain("")
+        }
         setStatus("success")
       } else {
         setStatus("error")
@@ -94,51 +125,77 @@ export function App() {
   return (
     <div className="flex min-h-svh items-center justify-center p-6">
       <div className="flex w-full max-w-xl flex-col gap-6">
+
+        <div className="flex flex-col gap-3">
+          <p className="text-sm font-semibold">Blocklist sources</p>
+          <div className="rounded-md border">
+            {sources.length === 0 && (
+              <p className="px-3 py-4 text-center text-xs text-muted-foreground">No sources configured.</p>
+            )}
+            {sources.map((src, i) => (
+              <div key={src.url}>
+                {i > 0 && <Separator />}
+                <div className="flex items-center gap-3 px-3 py-2">
+                  <Switch
+                    checked={src.enabled}
+                    onCheckedChange={(checked) => handleToggle(src.url, checked)}
+                  />
+                  <span className="flex-1 truncate text-xs text-muted-foreground" title={src.url}>
+                    {src.url}
+                  </span>
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    onClick={() => openConfirm("source-remove", src.url)}
+                  >
+                    <Trash2 />
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <Input
+              value={newSourceUrl}
+              onChange={(e) => setNewSourceUrl(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && openConfirm("source-add", newSourceUrl.trim())}
+              placeholder="https://example.com/blocklist.txt"
+            />
+            <Button variant="outline" onClick={() => openConfirm("source-add", newSourceUrl.trim())}>
+              Add
+            </Button>
+          </div>
+        </div>
+
+        <Separator />
+
         <div className="flex gap-6">
           <Field className="flex-1">
-            <FieldLabel>Add a domain</FieldLabel>
+            <FieldLabel>Block domain</FieldLabel>
             <div className="flex gap-2">
               <Input
-                value={addDomain}
-                onChange={(e) => setAddDomain(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && openConfirm("add")}
+                value={blockDomain}
+                onChange={(e) => setBlockDomain(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && openConfirm("block", blockDomain.trim())}
                 placeholder="example.com"
               />
-              <Button onClick={() => openConfirm("add")}>add</Button>
+              <Button onClick={() => openConfirm("block", blockDomain.trim())}>Block</Button>
             </div>
           </Field>
-
           <Field className="flex-1">
-            <FieldLabel>Remove a domain</FieldLabel>
+            <FieldLabel>Unblock domain</FieldLabel>
             <div className="flex gap-2">
               <Input
-                value={removeDomain}
-                onChange={(e) => setRemoveDomain(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && openConfirm("remove")}
+                value={unblockDomain}
+                onChange={(e) => setUnblockDomain(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && openConfirm("unblock", unblockDomain.trim())}
                 placeholder="example.com"
               />
-              <Button variant="destructive" onClick={() => openConfirm("remove")}>remove</Button>
+              <Button variant="destructive" onClick={() => openConfirm("unblock", unblockDomain.trim())}>Unblock</Button>
             </div>
           </Field>
         </div>
 
-        <Field>
-          <FieldLabel>Blocklist source URL</FieldLabel>
-          <div className="flex gap-2">
-            <Input
-              value={sourceUrl}
-              onChange={(e) => setSourceUrl(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && openConfirm("source")}
-              placeholder="https://raw.githubusercontent.com/..."
-            />
-            <Button variant="outline" onClick={() => openConfirm("source")}>change</Button>
-          </div>
-          {currentSource && (
-            <p className="text-xs text-muted-foreground truncate">
-              Current: {currentSource}
-            </p>
-          )}
-        </Field>
       </div>
 
       <Dialog open={pending !== null} onOpenChange={(open) => !open && handleClose()}>
@@ -154,7 +211,7 @@ export function App() {
               <DialogFooter>
                 <Button variant="outline" onClick={handleClose}>Cancel</Button>
                 <Button
-                  variant={pending.action === "remove" ? "destructive" : "default"}
+                  variant={pending.action === "source-remove" || pending.action === "unblock" ? "destructive" : "default"}
                   onClick={handleConfirm}
                 >
                   Confirm
@@ -167,7 +224,9 @@ export function App() {
             <div className="flex flex-col items-center gap-3 py-4">
               <Loader2 className="size-6 animate-spin text-muted-foreground" />
               <p className="text-sm text-muted-foreground">
-                {pending?.action === "source" ? "Fetching blocklist…" : "Updating blocklist…"}
+                {pending?.action === "source-add" || pending?.action === "source-remove"
+                  ? "Updating sources…"
+                  : "Updating blocklist…"}
               </p>
             </div>
           )}

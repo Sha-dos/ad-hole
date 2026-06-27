@@ -1,4 +1,4 @@
-use crate::blocklist::Blocklist;
+use crate::blocklist::{Blocklist, Source};
 use axum::extract::{Path, State};
 use axum::http::{StatusCode, Uri, header};
 use axum::response::{Html, IntoResponse, Response};
@@ -30,8 +30,10 @@ struct PatchBlocklist {
 }
 
 #[derive(Deserialize)]
-struct PatchSource {
+struct PatchSources {
     url: String,
+    action: String,      // "add", "remove", "toggle"
+    enabled: Option<bool>,
 }
 
 impl Server {
@@ -41,8 +43,8 @@ impl Server {
             .route("/set_update_freq", post(Self::handle_update_freq))
             .route("/update_blocklist", post(Self::handle_update_blocklist))
             .route(
-                "/source",
-                get(Self::handle_get_source).post(Self::handle_change_source),
+                "/sources",
+                get(Self::handle_get_sources).post(Self::handle_patch_sources),
             )
             .with_state(blocklist)
             .fallback(Self::frontend);
@@ -148,34 +150,78 @@ impl Server {
         }
     }
 
-    async fn handle_get_source(State(blocklist): State<Arc<Mutex<Blocklist>>>) -> Json<Value> {
+    async fn handle_get_sources(State(blocklist): State<Arc<Mutex<Blocklist>>>) -> Json<Value> {
         let guard = blocklist.lock().await;
-        Json(json!({ "url": guard.url }))
+        Json(json!({ "sources": guard.sources }))
     }
 
-    async fn handle_change_source(
+    async fn handle_patch_sources(
         State(blocklist): State<Arc<Mutex<Blocklist>>>,
-        Json(payload): Json<PatchSource>,
+        Json(payload): Json<PatchSources>,
     ) -> Json<Value> {
         let mut guard = blocklist.lock().await;
 
-        guard.url = payload.url;
+        match payload.action.as_str() {
+            "add" => {
+                if guard.sources.iter().any(|s| s.url == payload.url) {
+                    return Json(json!({
+                        "status": "error",
+                        "message": "Source already exists",
+                    }));
+                }
+                guard.sources.push(Source { url: payload.url.clone(), enabled: true });
+                info!(url = %payload.url, "added blocklist source");
 
-        match guard.update().await {
-            Ok(_) => {
-                info!(url = %guard.url, "blocklist source changed");
-                Json(json!({
-                    "status": "success",
-                    "new_url": guard.url,
-                }))
+                match guard.update().await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        error!(error = %e, "failed to update after adding source");
+                    }
+                }
+
+                if guard.save_config().await.is_err() {
+                    return Json(json!({ "status": "error", "message": "Failed to save config" }));
+                }
+
+                Json(json!({ "status": "success", "action": "added" }))
             }
-            Err(e) => {
-                error!(error = %e, "failed to update blocklist after source change");
-                Json(json!({
-                    "status": "error",
-                    "message": format!("Failed to update blocklist after changing source: {}", e),
-                }))
+            "remove" => {
+                guard.sources.retain(|s| s.url != payload.url);
+                info!(url = %payload.url, "removed blocklist source");
+
+                match guard.update().await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        error!(error = %e, "failed to update after removing source");
+                    }
+                }
+
+                if guard.save_config().await.is_err() {
+                    return Json(json!({ "status": "error", "message": "Failed to save config" }));
+                }
+
+                Json(json!({ "status": "success", "action": "removed" }))
             }
+            "toggle" => {
+                if let Some(src) = guard.sources.iter_mut().find(|s| s.url == payload.url) {
+                    src.enabled = payload.enabled.unwrap_or(!src.enabled);
+                    info!(url = %payload.url, enabled = src.enabled, "toggled blocklist source");
+                }
+
+                if guard.save_config().await.is_err() {
+                    return Json(json!({ "status": "error", "message": "Failed to save config" }));
+                }
+
+                if let Err(e) = guard.update().await {
+                    error!(error = %e, "update after toggle failed");
+                    return Json(json!({ "status": "error", "message": "Failed to update blocklist after toggle" }));
+                }
+
+                drop(guard);
+
+                Json(json!({ "status": "success", "action": "toggled" }))
+            }
+            _ => Json(json!({ "status": "error", "message": "Invalid action" })),
         }
     }
 }
