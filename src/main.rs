@@ -1,3 +1,4 @@
+mod analytics;
 mod blocklist;
 mod server;
 
@@ -6,6 +7,7 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use anyhow::Result;
 use tokio::{net::UdpSocket, sync::Mutex, time::timeout};
 
+use crate::analytics::Analytics;
 use crate::blocklist::Blocklist;
 use crate::server::Server;
 use tracing::{error, info, warn};
@@ -209,10 +211,11 @@ async fn main() -> anyhow::Result<()> {
 
     let socket = Arc::new(UdpSocket::bind("[::]:53".parse::<SocketAddr>()?).await?);
     let blocklist = Arc::new(Mutex::new(Blocklist::new()));
+    let analytics = Analytics::new("analytics.db")?;
 
     tokio::spawn(Blocklist::spawn(blocklist.clone()));
 
-    tokio::spawn(Server::run(blocklist.clone()));
+    tokio::spawn(Server::run(blocklist.clone(), analytics.clone()));
 
     let mut buf = [0u8; 1024];
     loop {
@@ -220,6 +223,7 @@ async fn main() -> anyhow::Result<()> {
         let bytes = buf[..len].to_vec();
         let socket = socket.clone();
         let blocklist = blocklist.clone();
+        let analytics = analytics.clone();
 
         tokio::spawn(async move {
             let Ok(parsed) = parse_dns_request(&bytes) else {
@@ -227,7 +231,10 @@ async fn main() -> anyhow::Result<()> {
                 return;
             };
 
-            let response = if blocklist.lock().await.check(&parsed.question.qname) {
+            let blocked = blocklist.lock().await.check(&parsed.question.qname);
+            analytics.record(parsed.question.qname.clone(), blocked);
+
+            let response = if blocked {
                 info!(domain = %parsed.question.qname, "blocked");
                 build_blocked_answer(&bytes, &parsed)
             } else {

@@ -1,3 +1,4 @@
+use crate::analytics::Analytics;
 use crate::blocklist::{Blocklist, Source};
 use axum::extract::{Path, State};
 use axum::http::{StatusCode, Uri, header};
@@ -15,6 +16,12 @@ use tracing::{error, info};
 #[derive(RustEmbed)]
 #[folder = "frontend/dist/"]
 struct Assets;
+
+#[derive(Clone)]
+struct AppState {
+    blocklist: Arc<Mutex<Blocklist>>,
+    analytics: Arc<Analytics>,
+}
 
 pub struct Server;
 
@@ -37,7 +44,8 @@ struct PatchSources {
 }
 
 impl Server {
-    pub async fn run(blocklist: Arc<Mutex<Blocklist>>) {
+    pub async fn run(blocklist: Arc<Mutex<Blocklist>>, analytics: Arc<Analytics>) {
+        let state = AppState { blocklist, analytics };
         let app = Router::new()
             .route("/check_blocklist/{domain}", get(Self::check_blocklist))
             .route("/set_update_freq", post(Self::handle_update_freq))
@@ -47,7 +55,10 @@ impl Server {
                 "/sources",
                 get(Self::handle_get_sources).post(Self::handle_patch_sources),
             )
-            .with_state(blocklist)
+            .route("/analytics", get(Self::handle_analytics_summary))
+            .route("/analytics/top_blocked", get(Self::handle_top_blocked))
+            .route("/analytics/top_queried", get(Self::handle_top_queried))
+            .with_state(state)
             .fallback(Self::frontend);
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
@@ -77,7 +88,7 @@ impl Server {
 
     async fn check_blocklist(
         Path(domain): Path<String>,
-        State(blocklist): State<Arc<Mutex<Blocklist>>>,
+        State(AppState { blocklist, .. }): State<AppState>,
     ) -> Json<Value> {
         let guard = blocklist.lock().await;
 
@@ -87,7 +98,7 @@ impl Server {
     }
 
     async fn handle_update_freq(
-        State(blocklist): State<Arc<Mutex<Blocklist>>>,
+        State(AppState { blocklist, .. }): State<AppState>,
         Json(payload): Json<PatchUpdateFreq>,
     ) -> Json<Value> {
         let mut guard = blocklist.lock().await;
@@ -100,7 +111,7 @@ impl Server {
     }
 
     async fn handle_update_blocklist(
-        State(blocklist): State<Arc<Mutex<Blocklist>>>,
+        State(AppState { blocklist, .. }): State<AppState>,
         Json(payload): Json<PatchBlocklist>,
     ) -> Json<Value> {
         let mut guard = blocklist.lock().await;
@@ -151,7 +162,9 @@ impl Server {
         }
     }
 
-    async fn handle_get_overrides(State(blocklist): State<Arc<Mutex<Blocklist>>>) -> Json<Value> {
+    async fn handle_get_overrides(
+        State(AppState { blocklist, .. }): State<AppState>,
+    ) -> Json<Value> {
         let guard = blocklist.lock().await;
         let mut added: Vec<&str> = guard.user_added.iter().map(|s| s.as_str()).collect();
         let mut removed: Vec<&str> = guard.user_removed.iter().map(|s| s.as_str()).collect();
@@ -162,13 +175,15 @@ impl Server {
         Json(json!({ "added": added, "removed": removed }))
     }
 
-    async fn handle_get_sources(State(blocklist): State<Arc<Mutex<Blocklist>>>) -> Json<Value> {
+    async fn handle_get_sources(
+        State(AppState { blocklist, .. }): State<AppState>,
+    ) -> Json<Value> {
         let guard = blocklist.lock().await;
         Json(json!({ "sources": guard.sources }))
     }
 
     async fn handle_patch_sources(
-        State(blocklist): State<Arc<Mutex<Blocklist>>>,
+        State(AppState { blocklist, .. }): State<AppState>,
         Json(payload): Json<PatchSources>,
     ) -> Json<Value> {
         let mut guard = blocklist.lock().await;
@@ -239,6 +254,42 @@ impl Server {
                 Json(json!({ "status": "success", "action": "toggled" }))
             }
             _ => Json(json!({ "status": "error", "message": "Invalid action" })),
+        }
+    }
+
+    async fn handle_analytics_summary(
+        State(AppState { analytics, .. }): State<AppState>,
+    ) -> Json<Value> {
+        match analytics.summary().await {
+            Ok(s) => Json(json!(s)),
+            Err(e) => {
+                error!(error = %e, "analytics summary failed");
+                Json(json!({ "error": "failed to fetch analytics" }))
+            }
+        }
+    }
+
+    async fn handle_top_blocked(
+        State(AppState { analytics, .. }): State<AppState>,
+    ) -> Json<Value> {
+        match analytics.top_blocked(10).await {
+            Ok(rows) => Json(json!({ "domains": rows })),
+            Err(e) => {
+                error!(error = %e, "top_blocked query failed");
+                Json(json!({ "error": "failed to fetch top blocked" }))
+            }
+        }
+    }
+
+    async fn handle_top_queried(
+        State(AppState { analytics, .. }): State<AppState>,
+    ) -> Json<Value> {
+        match analytics.top_queried(10).await {
+            Ok(rows) => Json(json!({ "domains": rows })),
+            Err(e) => {
+                error!(error = %e, "top_queried query failed");
+                Json(json!({ "error": "failed to fetch top queried" }))
+            }
         }
     }
 }
