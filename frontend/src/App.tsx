@@ -7,6 +7,9 @@ import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle } from "
 import { Loader2, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { useState, useEffect } from "react"
+import { Analytics } from "./Analytics.tsx"
+
+type Tab = "blocklist" | "analytics"
 
 interface Source {
   url: string
@@ -44,7 +47,23 @@ function ConfirmBody({ pending }: { pending: Pending }) {
   return <>Remove manual unblock on {val}? It may be re-blocked by a source list.</>
 }
 
+function NavItem({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
+        active
+          ? "bg-accent text-accent-foreground font-medium"
+          : "text-muted-foreground hover:text-foreground"
+      }`}
+    >
+      {children}
+    </button>
+  )
+}
+
 export function App() {
+  const [tab, setTab] = useState<Tab>("blocklist")
   const [sources, setSources] = useState<Source[]>([])
   const [overrides, setOverrides] = useState<Overrides>({ added: [], removed: [] })
   const [newSourceUrl, setNewSourceUrl] = useState("")
@@ -173,110 +192,127 @@ export function App() {
   }
 
   return (
-    <div className="min-h-svh p-6 pt-12">
-      <div className="flex gap-4">
-        <div className="flex min-w-0 flex-1 flex-col gap-3">
-          <Field>
-            <FieldLabel>Add source</FieldLabel>
-            <div className="flex gap-2">
-              <Input
-                value={newSourceUrl}
-                onChange={(e) => setNewSourceUrl(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && openConfirm("source-add", newSourceUrl.trim())}
-                placeholder="https://example.com/list.txt"
-              />
-              <Button variant="outline" onClick={() => openConfirm("source-add", newSourceUrl.trim())}>
-                Add
-              </Button>
-            </div>
-          </Field>
-          <div className="rounded-md border">
-            {sources.length === 0 && (
-              <p className="px-3 py-3 text-center text-xs text-muted-foreground">No sources.</p>
-            )}
-            {sources.map((src, i) => (
-              <div key={src.url}>
-                {i > 0 && <Separator />}
-                <div className="flex items-center gap-3 px-3 py-2">
-                  <Switch
-                    checked={src.enabled}
-                    onCheckedChange={(checked) => handleToggle(src.url, checked)}
+    <div className="min-h-svh">
+      <header className="sticky top-0 z-10 border-b bg-background">
+        <div className="flex h-12 items-center gap-1 px-6">
+          <span className="mr-3 text-sm font-semibold">ad-hole</span>
+          <NavItem active={tab === "blocklist"} onClick={() => setTab("blocklist")}>
+            Blocklist
+          </NavItem>
+          <NavItem active={tab === "analytics"} onClick={() => setTab("analytics")}>
+            Analytics
+          </NavItem>
+        </div>
+      </header>
+
+      <main className="p-6">
+        {tab === "analytics" ? (
+          <Analytics />
+        ) : (
+          <div className="flex gap-4">
+            <div className="flex min-w-0 flex-1 flex-col gap-3">
+              <Field>
+                <FieldLabel>Add source</FieldLabel>
+                <div className="flex gap-2">
+                  <Input
+                    value={newSourceUrl}
+                    onChange={(e) => setNewSourceUrl(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && openConfirm("source-add", newSourceUrl.trim())}
+                    placeholder="https://example.com/list.txt"
                   />
-                  <span className="flex-1 truncate text-xs text-muted-foreground" title={src.url}>
-                    {src.url}
-                  </span>
-                  <Button size="icon-sm" variant="ghost" onClick={() => openConfirm("source-remove", src.url)}>
-                    <Trash2 />
+                  <Button variant="outline" onClick={() => openConfirm("source-add", newSourceUrl.trim())}>
+                    Add
                   </Button>
                 </div>
+              </Field>
+              <div className="rounded-md border">
+                {sources.length === 0 && (
+                  <p className="px-3 py-3 text-center text-xs text-muted-foreground">No sources.</p>
+                )}
+                {sources.map((src, i) => (
+                  <div key={src.url}>
+                    {i > 0 && <Separator />}
+                    <div className="flex items-center gap-3 px-3 py-2">
+                      <Switch
+                        checked={src.enabled}
+                        onCheckedChange={(checked) => handleToggle(src.url, checked)}
+                      />
+                      <span className="flex-1 truncate text-xs text-muted-foreground" title={src.url}>
+                        {src.url}
+                      </span>
+                      <Button size="icon-sm" variant="ghost" onClick={() => openConfirm("source-remove", src.url)}>
+                        <Trash2 />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="flex w-52 shrink-0 flex-col gap-3">
-          <Field>
-            <FieldLabel>Block domain</FieldLabel>
-            <div className="flex gap-2">
-              <Input
-                value={blockDomain}
-                onChange={(e) => setBlockDomain(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && openConfirm("block", blockDomain.trim())}
-                placeholder="example.com"
-              />
-              <Button onClick={() => openConfirm("block", blockDomain.trim())}>Block</Button>
             </div>
-          </Field>
-          <div className="rounded-md border">
-            {overrides.added.length === 0 && (
-              <p className="px-3 py-3 text-center text-xs text-muted-foreground">None.</p>
-            )}
-            {overrides.added.map((domain, i) => (
-              <div key={domain}>
-                {i > 0 && <Separator />}
-                <div className="flex items-center gap-2 px-3 py-2">
-                  <span className="flex-1 truncate text-xs" title={domain}>{domain}</span>
-                  <Button size="icon-sm" variant="ghost" onClick={() => openConfirm("override-unblock", domain)}>
-                    <Trash2 />
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
 
-        <div className="flex w-52 shrink-0 flex-col gap-3">
-          <Field>
-            <FieldLabel>Unblock domain</FieldLabel>
-            <div className="flex gap-2">
-              <Input
-                value={unblockDomain}
-                onChange={(e) => setUnblockDomain(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && openConfirm("unblock", unblockDomain.trim())}
-                placeholder="example.com"
-              />
-              <Button variant="destructive" onClick={() => openConfirm("unblock", unblockDomain.trim())}>Unblock</Button>
+            <div className="flex w-52 shrink-0 flex-col gap-3">
+              <Field>
+                <FieldLabel>Block domain</FieldLabel>
+                <div className="flex gap-2">
+                  <Input
+                    value={blockDomain}
+                    onChange={(e) => setBlockDomain(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && openConfirm("block", blockDomain.trim())}
+                    placeholder="example.com"
+                  />
+                  <Button onClick={() => openConfirm("block", blockDomain.trim())}>Block</Button>
+                </div>
+              </Field>
+              <div className="rounded-md border">
+                {overrides.added.length === 0 && (
+                  <p className="px-3 py-3 text-center text-xs text-muted-foreground">None.</p>
+                )}
+                {overrides.added.map((domain, i) => (
+                  <div key={domain}>
+                    {i > 0 && <Separator />}
+                    <div className="flex items-center gap-2 px-3 py-2">
+                      <span className="flex-1 truncate text-xs" title={domain}>{domain}</span>
+                      <Button size="icon-sm" variant="ghost" onClick={() => openConfirm("override-unblock", domain)}>
+                        <Trash2 />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
-          </Field>
-          <div className="rounded-md border">
-            {overrides.removed.length === 0 && (
-              <p className="px-3 py-3 text-center text-xs text-muted-foreground">None.</p>
-            )}
-            {overrides.removed.map((domain, i) => (
-              <div key={domain}>
-                {i > 0 && <Separator />}
-                <div className="flex items-center gap-2 px-3 py-2">
-                  <span className="flex-1 truncate text-xs text-muted-foreground" title={domain}>{domain}</span>
-                  <Button size="icon-sm" variant="ghost" onClick={() => openConfirm("override-unremove", domain)}>
-                    <Trash2 />
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
 
-      </div>
+            <div className="flex w-52 shrink-0 flex-col gap-3">
+              <Field>
+                <FieldLabel>Unblock domain</FieldLabel>
+                <div className="flex gap-2">
+                  <Input
+                    value={unblockDomain}
+                    onChange={(e) => setUnblockDomain(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && openConfirm("unblock", unblockDomain.trim())}
+                    placeholder="example.com"
+                  />
+                  <Button variant="destructive" onClick={() => openConfirm("unblock", unblockDomain.trim())}>Unblock</Button>
+                </div>
+              </Field>
+              <div className="rounded-md border">
+                {overrides.removed.length === 0 && (
+                  <p className="px-3 py-3 text-center text-xs text-muted-foreground">None.</p>
+                )}
+                {overrides.removed.map((domain, i) => (
+                  <div key={domain}>
+                    {i > 0 && <Separator />}
+                    <div className="flex items-center gap-2 px-3 py-2">
+                      <span className="flex-1 truncate text-xs text-muted-foreground" title={domain}>{domain}</span>
+                      <Button size="icon-sm" variant="ghost" onClick={() => openConfirm("override-unremove", domain)}>
+                        <Trash2 />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </main>
 
       <Dialog open={pending !== null} onOpenChange={(open) => !open && !loading && setPending(null)}>
         <DialogContent>
