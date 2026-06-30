@@ -117,7 +117,11 @@ impl Analytics {
             .unwrap_or_default()
             .as_secs() as i64;
 
-        let _ = self.sender.send(QueryEvent { ts, domain, blocked });
+        let _ = self.sender.send(QueryEvent {
+            ts,
+            domain,
+            blocked,
+        });
     }
 
     pub async fn summary(&self) -> anyhow::Result<Summary> {
@@ -143,7 +147,12 @@ impl Analytics {
                 .count()
                 .get_result(&mut conn)?;
 
-            Ok(Summary { total, blocked, total_today, blocked_today })
+            Ok(Summary {
+                total,
+                blocked,
+                total_today,
+                blocked_today,
+            })
         })
         .await?
     }

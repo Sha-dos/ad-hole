@@ -166,7 +166,11 @@ async fn forward_to_upstream(bytes: &[u8]) -> Result<Vec<u8>> {
         "[2606:4700:4700::1111]:53",
     ] {
         let addr: SocketAddr = server.parse()?;
-        let bind_addr = if addr.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" };
+        let bind_addr = if addr.is_ipv6() {
+            "[::]:0"
+        } else {
+            "0.0.0.0:0"
+        };
         let upstream = match UdpSocket::bind(bind_addr).await {
             Ok(s) => s,
             Err(_) => continue,

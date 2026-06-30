@@ -45,7 +45,10 @@ struct PatchSources {
 
 impl Server {
     pub async fn run(blocklist: Arc<Mutex<Blocklist>>, analytics: Arc<Analytics>) {
-        let state = AppState { blocklist, analytics };
+        let state = AppState {
+            blocklist,
+            analytics,
+        };
         let app = Router::new()
             .route("/check_blocklist/{domain}", get(Self::check_blocklist))
             .route("/set_update_freq", post(Self::handle_update_freq))
@@ -175,9 +178,7 @@ impl Server {
         Json(json!({ "added": added, "removed": removed }))
     }
 
-    async fn handle_get_sources(
-        State(AppState { blocklist, .. }): State<AppState>,
-    ) -> Json<Value> {
+    async fn handle_get_sources(State(AppState { blocklist, .. }): State<AppState>) -> Json<Value> {
         let guard = blocklist.lock().await;
         Json(json!({ "sources": guard.sources }))
     }
@@ -269,9 +270,7 @@ impl Server {
         }
     }
 
-    async fn handle_top_blocked(
-        State(AppState { analytics, .. }): State<AppState>,
-    ) -> Json<Value> {
+    async fn handle_top_blocked(State(AppState { analytics, .. }): State<AppState>) -> Json<Value> {
         match analytics.top_blocked(10).await {
             Ok(rows) => Json(json!({ "domains": rows })),
             Err(e) => {
@@ -281,9 +280,7 @@ impl Server {
         }
     }
 
-    async fn handle_top_queried(
-        State(AppState { analytics, .. }): State<AppState>,
-    ) -> Json<Value> {
+    async fn handle_top_queried(State(AppState { analytics, .. }): State<AppState>) -> Json<Value> {
         match analytics.top_queried(10).await {
             Ok(rows) => Json(json!({ "domains": rows })),
             Err(e) => {
